@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Buoyancy Simulator with Stable Rotation</title>
+  <style>
+    html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; font-family:sans-serif; }
+    #canvas { position:absolute; top:0; left:0; width:100%; height:100%; }
+    #controls { position:absolute; top:10px; left:10px; background:rgba(255,255,255,0.9); padding:10px; border-radius:4px; z-index:10; }
+    #controls label, #controls button { display:block; margin:6px 0; }
+    #info { margin-top:8px; line-height:1.4; font-size:0.9em; }
+    #massValue, #speedValue { font-weight:bold; margin-left:8px; }
+    #legend { margin-top:8px; font-size:0.9em; }
+    #legend div { margin:4px 0; display:flex; align-items:center; }
+    #legend span { width:20px; height:4px; display:inline-block; margin-right:6px; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="controls">
+    <label>Mass (kg): <input id="massSlider" type="range" min="10" max="10000" step="10" value="100"><span id="massValue">100</span></label>
+    <label>Speed: <input id="speedSlider" type="range" min="0.1" max="5" step="0.1" value="1"><span id="speedValue">1.0</span></label>
+    <label><input id="showForces" type="checkbox"> Show Force Vectors</label>
+    <div id="legend">
+      <div><span style="background:red;"></span>Weight</div>
+      <div><span style="background:green;"></span>Buoyancy</div>
+    </div>
+    <button id="resetBtn">Reset Drawing</button>
+    <button id="dropBtn">Drop Shape</button>
+    <div id="info"></div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/paper.js/0.12.15/paper-full.min.js"></script>
+  <script type="text/javascript">
+  window.onload = function() {
+    // Setup Paper.js
+    paper.setup(document.getElementById('canvas'));
+
+    // Constants
+    var g = 9.8;
+    var waterDensity = 1000;
+    var thickness = 1;
+    var pxToM = 0.01;
+    var mToPx = 1 / pxToM;
+    var dampingCoef = 1000;
+    var rotDampRate = 2;
+    var arrowScale = 0.005;
+    var arrowThickness = 3;
+    var arrowHeadLen = 12;
+    var arrowHeadAngle = 30;
+
+    // State
+    var shape = null;
+    var tempPath = null;
+    var displacedRegion = null;
+    var velocity = 0;
+    var angularVelocity = 0;
+    var targetMass = 100;
+    var mass = 100;
+    var simSpeed = 1;
+    var showForces = false;
+    var arrows = [];
+
+    // Regions
+    var waterLevel, waterRect, drawRegion, drawOutline;
+    function setupRegions() {
+      var w = paper.view.size.width, h = paper.view.size.height;
+      waterLevel = h / 2;
+      if (waterRect) waterRect.remove();
+      if (drawOutline) drawOutline.remove();
+      waterRect = new paper.Path.Rectangle({ point: [0, waterLevel], size: [w, h - waterLevel], fillColor: '#a0d6f9' });
+      var rw = w * 0.6, rx = (w - rw) / 2;
+      drawRegion = new paper.Rectangle(new paper.Point(rx, 0), new paper.Size(rw, waterLevel));
+      drawOutline = new paper.Path.Rectangle({ rectangle: drawRegion, strokeColor: '#666', dashArray: [4, 4] });
+    }
+    setupRegions();
+    window.addEventListener('resize', function() {
+      setupRegions();
+      resetSimulation();
+    });
+
+    // Drawing Tool
+    var tool = new paper.Tool();
+    tool.minDistance = 5;
+    tool.onMouseDown = function(event) {
+      if (shape) return;
+      if (!drawRegion.contains(event.point)) return;
+      if (tempPath) tempPath.remove();
+      tempPath = new paper.Path({ segments: [event.point], strokeColor: 'black', strokeWidth: 2 });
+    };
+    tool.onMouseDrag = function(event) {
+      if (!tempPath) return;
+      if (!drawRegion.contains(event.point)) return;
+      tempPath.add(event.point);
+    };
+    tool.onMouseUp = function(event) {
+      if (!tempPath) return;
+      tempPath.closed = true;
+      tempPath.simplify(5);
+      tempPath.fillColor = '#ddd';
+      shape = tempPath;
+      tempPath = null;
+    };
+
+    // UI Elements
+    var massSlider = document.getElementById('massSlider');
+    var massValue = document.getElementById('massValue');
+    massSlider.addEventListener('input', function() {
+      targetMass = +this.value;
+      massValue.textContent = targetMass;
+    });
+    massSlider.addEventListener('change', function() {
+      mass = targetMass;
+    });
+
+    var speedSlider = document.getElementById('speedSlider');
+    var speedValue = document.getElementById('speedValue');
+    speedSlider.addEventListener('input', function() {
+      simSpeed = +this.value;
+      speedValue.textContent = simSpeed.toFixed(1);
+    });
+
+    var showChk = document.getElementById('showForces');
+    showChk.addEventListener('change', function() {
+      showForces = this.checked;
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', resetSimulation);
+    document.getElementById('dropBtn').addEventListener('click', function() {
+      if (!shape) return;
+      paper.view.onFrame = null;
+      resetDisplacement();
+      clearArrows();
+      velocity = angularVelocity = 0;
+      mass = targetMass;
+      paper.view.onFrame = simulate;
+    });
+
+    // Reset and helpers
+    function resetSimulation() {
+      paper.view.onFrame = null;
+      if (shape) { shape.remove(); shape = null; }
+      if (tempPath) { tempPath.remove(); tempPath = null; }
+      resetDisplacement(); clearArrows();
+      velocity = angularVelocity = 0;
+      mass = targetMass;
+      document.getElementById('info').innerHTML = '';
+    }
+    function resetDisplacement() {
+      if (displacedRegion) { displacedRegion.remove(); displacedRegion = null; }
+    }
+    function clearArrows() {
+      arrows.forEach(function(a) { a.remove(); });
+      arrows = [];
+    }
+    function getCentroid(path) {
+      var pts = path.segments.map(function(s) { return s.point; });
+      var area = 0, cx = 0, cy = 0;
+      for (var i = 0; i < pts.length; i++) {
+        var p0 = pts[i], p1 = pts[(i + 1) % pts.length];
+        var c = p0.x * p1.y - p1.x * p0.y;
+        area += c;
+        cx += (p0.x + p1.x) * c;
+        cy += (p0.y + p1.y) * c;
+      }
+      area *= 0.5;
+      if (area === 0) return path.bounds.center;
+      cx /= (6 * area);
+      cy /= (6 * area);
+      return new paper.Point(cx, cy);
+    }
+    function computeInertia(path, mass) {
+      var cen = getCentroid(path), sumSq = 0;
+      path.segments.forEach(function(s) {
+        var d = s.point.subtract(cen);
+        sumSq += d.x * d.x + d.y * d.y;
+      });
+      var meanSq = sumSq / path.segments.length;
+      return mass * meanSq * (pxToM * pxToM);
+    }
+    function drawArrow(from, to, color) {
+      var line = new paper.Path.Line({ from: from, to: to, strokeColor: color, strokeWidth: arrowThickness });
+      arrows.push(line);
+      var dir = to.subtract(from).normalize(arrowHeadLen);
+      var left = to.subtract(dir.rotate(arrowHeadAngle));
+      var right = to.subtract(dir.rotate(-arrowHeadAngle));
+      var head = new paper.Path({ segments: [to, left, right], closed: true, fillColor: color });
+      arrows.push(head);
+    }
+    function updateInfo(totA, subA, weight, buoyant, drag) {
+      document.getElementById('info').innerHTML =
+        'Total Area: ' + totA.toFixed(3) + ' m²<br>' +
+        'Submerged: ' + subA.toFixed(3) + ' m²<br>' +
+        'Mass: ' + mass.toFixed(2) + ' kg<br>' +
+        'Weight: ' + weight.toFixed(1) + ' N<br>' +
+        'Buoyant: ' + buoyant.toFixed(1) + ' N<br>' +
+        'Drag: ' + (-drag).toFixed(1) + ' N<br>' +
+        'Ang Vel: ' + angularVelocity.toFixed(2) + ' rad/s';
+    }
+
+    // Simulation Loop
+    function simulate(event) {
+      var dt = event.delta * simSpeed;
+      mass = targetMass;
+
+      // Translation
+      shape.translate(new paper.Point(0, velocity * mToPx * dt));
+      // Rotation
+      var cen = getCentroid(shape);
+      shape.rotate(angularVelocity * dt * 180 / Math.PI, cen);
+
+      // Bottom boundary
+      var b = shape.bounds;
+      var hitBottom = false;
+      if (b.bottom > paper.view.size.height) {
+        shape.translate(0, paper.view.size.height - b.bottom);
+        hitBottom = true;
+      }
+
+      resetDisplacement(); clearArrows();
+
+      // Submerged region
+      var region = shape.intersect(waterRect), subA = 0;
+      if (region && region.area) {
+        subA = Math.abs(region.area) * pxToM * pxToM;
+        displacedRegion = region;
+        displacedRegion.fillColor = 'rgba(0,100,255,0.4)';
+      }
+
+      var totA = Math.abs(shape.area) * pxToM * pxToM;
+      var weight = mass * g;
+      var buoyant = waterDensity * g * subA * thickness;
+      var drag = subA > 0 ? -dampingCoef * subA * velocity : 0;
+      var netF = weight - buoyant + drag;
+      var accel = netF / mass;
+      velocity += accel * dt;
+
+      // Stable righting torque
+      var lever = 0;
+      if (displacedRegion) {
+        var bC = getCentroid(displacedRegion);
+        lever = (bC.x - cen.x) * pxToM;
+      }
+      var torque = -buoyant * lever;
+      var inertia = computeInertia(shape, mass);
+      var angularAcc = torque / inertia;
+      angularVelocity += angularAcc * dt;
+
+      // Rotational damping
+      angularVelocity *= Math.exp(-rotDampRate * dt);
+
+      // Draw forces
+      if (showForces) {
+        drawArrow(cen, cen.add(new paper.Point(0, weight * arrowScale)), 'red');
+        drawArrow(cen, cen.add(new paper.Point(0, -buoyant * arrowScale)), 'green');
+      }
+
+      // Update info
+      updateInfo(totA, subA, weight, buoyant, drag);
+
+      // Stop when settled or bottom hit
+      if (hitBottom || (Math.abs(velocity) < 0.005 && Math.abs(angularVelocity) < 0.005)) {
+        paper.view.onFrame = null;
+      }
+    }
+  };  
+  </script>
+</body>
+</html>
