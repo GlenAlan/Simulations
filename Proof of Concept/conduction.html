@@ -9,21 +9,21 @@
     #controls { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); padding: 10px; border-radius: 5px; z-index: 1; }
     #controls label, #controls div { display: block; margin: 5px 0; }
     #controls input { width: 150px; }
-    canvas { display: block; }
+    canvas { display: block; margin: 40px auto;}
   </style>
 </head>
 <body>
 <div id="controls">
-  <label>Speed: <span id="timeScaleVal">10</span>x
-    <input type="range" id="timeScale" min="1" max="100" step="1" value="10">
+  <label>Speed: <span id="timeScaleVal">25</span>x
+    <input type="range" id="timeScale" min="1" max="100" step="1" value="25">
   </label>
-  <label>Heating Radius: <span id="heatSizeVal">30</span>
-    <input type="range" id="heatSize" min="10" max="100" step="1" value="30">
+  <label>Heating Radius: <span id="heatSizeVal">50</span>
+    <input type="range" id="heatSize" min="10" max="100" step="1" value="50">
   </label>
-  <label>Heat Intensity: <span id="heatAmpVal">0.5</span>
-    <input type="range" id="heatAmp" min="0.1" max="5" step="0.1" value="0.5">
+  <label>Heat Intensity: <span id="heatAmpVal">1</span>
+    <input type="range" id="heatAmp" min="0.1" max="5" step="0.1" value="1">
   </label>
-  <div>Energy: <span id="energyVal">0.00</span></div>
+  <div>Avg. Temperature: <span id="energyVal">0.00</span>K</div>
 </div>
 <canvas id="canvas" width="800" height="400"></canvas>
 <script>
@@ -37,7 +37,7 @@ const offsetX=(width-(cols-1)*spacing)/2, offsetY=(height-(rows-1)*spacing)/2;
 const kN=0.2, kR=0.5;
 const baseDt=0.005;
 const colorSmooth=0.9;
-let timeScale=1, heatRadius=30, heatAmp=0.5;
+let timeScale=25, heatRadius=30, heatAmp=0.5;
 // UI
 const timeSlider=document.getElementById('timeScale'), timeVal=document.getElementById('timeScaleVal');
 const sizeSlider=document.getElementById('heatSize'), sizeVal=document.getElementById('heatSizeVal');
@@ -153,7 +153,7 @@ function animate(){
     ctx.fillStyle=`hsl(${hue},100%,50%)`;
     ctx.beginPath(); ctx.arc(p.x,p.y,5,0,Math.PI*2); ctx.fill();
   });
-  energyVal.textContent=computeEnergy().toFixed(2);
+  energyVal.textContent=computeEnergy().toFixed(0);
   requestAnimationFrame(animate);
 }
 animate();
