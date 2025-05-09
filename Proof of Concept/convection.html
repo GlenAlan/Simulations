@@ -39,6 +39,8 @@
           buoyancyCoeff = 1.0,  // strength of buoyant force
           ambientTemp   = 0.5;  // reference temperature
     const dt = 0.02;            // fixed timestep
+    avg_density = ambientTemp; // average density for buoyancy
+    prev_avg_density = ambientTemp; // previous average density for buoyancy
 
     // FLUID STATE ARRAYS
     let u        = new Float32Array(size*size),
@@ -232,15 +234,23 @@
         }
       }
 
+      
+
       // 2) continuous buoyancy (hot rises, cool sinks)
+      prev_avg_density = avg_density
+      avg_density = 0;
       for (let j = 1; j <= N; j++) {
         for (let i = 1; i <= N; i++) {
           const id = IX(i,j);
-          const anomaly = dens[id] - ambientTemp;
+          avg_density += dens[id]; // accumulate density for buoyancy
+          const anomaly = dens[id] - prev_avg_density;
           // hotter than ambient → upward (positive v)
           v_prev[id] += buoyancyCoeff * anomaly;
         }
       }
+      avg_density /= N*N; // average density of the grid
+      // buoyancy force is proportional to the difference from the average density
+      
 
       // 3) VELOCITY STEP
       addSource(u, u_prev);
