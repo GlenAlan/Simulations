@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Maxwell's Demon Simulation</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #222; color: #fff; font-family: sans-serif; }
+    #controls { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); padding: 10px; border-radius: 5px; z-index: 1; }
+    #controls label { display: block; margin: 5px 0; }
+    #controls input[type=range] { width: 150px; }
+    canvas { display: block; margin: 40px auto; background: #111; border: 1px solid #444; }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <label>Particles per Color: <span id="countVal">100</span>
+      <input type="range" id="particleCount" min="1" max="500" step="1" value="100">
+    </label>
+    <label>Speed (ticks/frame): <span id="speedVal">10</span>
+      <input type="range" id="speedSlider" min="1" max="250" step="1" value="10">
+    </label>
+    <label><input type="checkbox" id="autoMode", checked="True"> Auto Mode (Maxwell’s Demon)</label>
+    <div style="font-size:0.9em; color:#aaa; margin-top:5px;">(Manual: hold mouse to open gate)</div>
+  </div>
+
+  <canvas id="canvas" width="800" height="400"></canvas>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx    = canvas.getContext('2d');
+    const width  = canvas.width;
+    const height = canvas.height;
+    const centerX = width/2;
+    const gateH = 100, gateY1 = height/2 - gateH/2, gateY2 = height/2 + gateH/2;
+
+    const slider = document.getElementById('particleCount');
+    const countVal = document.getElementById('countVal');
+    const autoCB = document.getElementById('autoMode');
+    const speedSlider = document.getElementById('speedSlider');
+    const speedValEl = document.getElementById('speedVal');
+
+    let nPerColor = +slider.value;
+    let particles = [];
+    let autoMode = autoCB.checked;
+    let gateOpen = false;
+    let mouseDown = false;
+    let ticksPerFrame = +speedSlider.value;
+
+    const radius = 5;
+    const dt = 0.1; // fixed timestep
+
+    class Particle {
+      constructor(x,y,vx,vy,color){ this.x=x; this.y=y; this.vx=vx; this.vy=vy; this.color=color; }
+    }
+
+    function initParticles(){
+      particles = [];
+      for(let i=0; i<2*nPerColor; i++){
+        const color = i<nPerColor? 'red':'blue';
+        const x = Math.random()*(width-2*radius)+radius;
+        const y = Math.random()*(height-2*radius)+radius;
+        const ang = Math.random()*Math.PI*2, sp=1+Math.random()*2;
+        particles.push(new Particle(x,y,Math.cos(ang)*sp,Math.sin(ang)*sp,color));
+      }
+    }
+
+    slider.oninput = ()=>{
+      nPerColor = +slider.value; countVal.textContent = nPerColor; initParticles();
+    };
+    autoCB.onchange = ()=> autoMode = autoCB.checked;
+    speedSlider.oninput = ()=>{
+      ticksPerFrame = +speedSlider.value;
+      speedValEl.textContent = ticksPerFrame;
+    };
+    canvas.addEventListener('mousedown', ()=>mouseDown=true);
+    window.addEventListener('mouseup', ()=>mouseDown=false);
+
+    function simStep(){
+      // gate decision
+      if(autoMode){
+        const R = gateH/2, cx=centerX, cy=height/2;
+        let soonest=null, tMin=Infinity;
+        for(const p of particles){
+          const dx0=p.x-cx, dy0=p.y-cy;
+          if(dx0*dx0+dy0*dy0 <= R*R && p.vx!==0){
+            const t=(cx-p.x)/(p.vx*dt);
+            if(t>=0 && t<tMin){
+              const yI=p.y + p.vy*dt*t;
+              if(yI>=gateY1 && yI<=gateY2){ soonest=p; tMin=t; }
+            }
+          }
+        }
+        gateOpen = soonest?
+          (soonest.color==='red' && soonest.vx>0) || (soonest.color==='blue' && soonest.vx<0)
+          : false;
+      } else gateOpen = mouseDown;
+
+      // move & bounce walls
+      particles.forEach(p=>{
+        p.x += p.vx*dt;
+        p.y += p.vy*dt;
+        if(p.x<radius){ p.x=radius; p.vx=-p.vx+(Math.random()-0.5)*0.2; p.vy+=(Math.random()-0.5)*0.2; }
+        if(p.x>width-radius){ p.x=width-radius; p.vx=-p.vx+(Math.random()-0.5)*0.2; p.vy+=(Math.random()-0.5)*0.2; }
+        if(p.y<radius){ p.y=radius; p.vy=-p.vy+(Math.random()-0.5)*0.2; p.vx+=(Math.random()-0.5)*0.2; }
+        if(p.y>height-radius){ p.y=height-radius; p.vy=-p.vy+(Math.random()-0.5)*0.2; p.vx+=(Math.random()-0.5)*0.2; }
+        p.vx = Math.max(-2, Math.min(2, p.vx));
+        p.vy = Math.max(-2, Math.min(2, p.vy));
+      });
+      // barrier
+      particles.forEach(p=>{
+        const prevX = p.x - p.vx*dt;
+        if((prevX<centerX && p.x>=centerX)||(prevX>centerX && p.x<=centerX)){
+          const above = p.y<gateY1 || p.y>gateY2;
+          if(above||!gateOpen){ p.x=centerX; p.vx=-p.vx+(Math.random()-0.5)*0.2; p.vy+=(Math.random()-0.5)*0.2; }
+        }
+      });
+    }
+
+    function draw(){
+      ctx.clearRect(0,0,width,height);
+      ctx.strokeStyle='#444'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(centerX,0); ctx.lineTo(centerX,gateY1);
+      ctx.moveTo(centerX,gateY2); ctx.lineTo(centerX,height);
+      ctx.stroke();
+      if(!gateOpen){ ctx.beginPath(); ctx.moveTo(centerX,gateY1); ctx.lineTo(centerX,gateY2); ctx.stroke(); }
+      particles.forEach(p=>{ ctx.beginPath(); ctx.arc(p.x,p.y,radius,0,Math.PI*2); ctx.fillStyle=p.color; ctx.fill(); });
+    }
+
+    function animate(){
+      for(let i=0;i<ticksPerFrame;i++) simStep();
+      draw();
+      requestAnimationFrame(animate);
+    }
+
+    initParticles(); animate();
+  </script>
+</body>
+</html>
