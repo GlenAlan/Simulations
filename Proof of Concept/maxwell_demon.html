@@ -10,6 +10,9 @@
     #controls label { display: block; margin: 5px 0; }
     #controls input[type=range] { width: 150px; }
     canvas { display: block; margin: 40px auto; background: #111; border: 1px solid #444; }
+    #stats { text-align: center; margin: 10px auto; font-size: 14px; max-width: 800px; }
+    .stats-container { display: flex; justify-content: space-around; background: rgba(0,0,0,0.6); padding: 10px; border-radius: 5px; }
+    .stats-box { padding: 5px 15px; }
   </style>
 </head>
 <body>
@@ -20,11 +23,25 @@
     <label>Speed (ticks/frame): <span id="speedVal">10</span>
       <input type="range" id="speedSlider" min="1" max="250" step="1" value="10">
     </label>
+    <label>Gate Size: <span id="gateSizeVal">100</span>
+      <input type="range" id="gateSizeSlider" min="20" max="300" step="10" value="100">
+    </label>
     <label><input type="checkbox" id="autoMode" checked="true"> Auto Mode (Maxwell's Demon)</label>
     <div style="font-size:0.9em; color:#aaa; margin-top:5px;">(Manual: hold mouse to open gate)</div>
   </div>
 
   <canvas id="canvas" width="800" height="400"></canvas>
+  
+  <div id="stats">
+    <div class="stats-container">
+      <div class="stats-box">
+        <strong>Left Chamber:</strong> <span id="leftRed">0</span> Red, <span id="leftBlue">0</span> Blue
+      </div>
+      <div class="stats-box">
+        <strong>Right Chamber:</strong> <span id="rightRed">0</span> Red, <span id="rightBlue">0</span> Blue
+      </div>
+    </div>
+  </div>
 
   <script>
     const canvas = document.getElementById('canvas');
@@ -32,13 +49,20 @@
     const width  = canvas.width;
     const height = canvas.height;
     const centerX = width/2;
-    const gateH = 100, gateY1 = height/2 - gateH/2, gateY2 = height/2 + gateH/2;
 
     const slider = document.getElementById('particleCount');
     const countVal = document.getElementById('countVal');
     const autoCB = document.getElementById('autoMode');
     const speedSlider = document.getElementById('speedSlider');
     const speedValEl = document.getElementById('speedVal');
+    const gateSizeSlider = document.getElementById('gateSizeSlider');
+    const gateSizeValEl = document.getElementById('gateSizeVal');
+
+    // Stats elements
+    const leftRedEl = document.getElementById('leftRed');
+    const leftBlueEl = document.getElementById('leftBlue');
+    const rightRedEl = document.getElementById('rightRed');
+    const rightBlueEl = document.getElementById('rightBlue');
 
     let nPerColor = +slider.value;
     let particles = [];
@@ -46,6 +70,7 @@
     let gateOpen = false;
     let mouseDown = false;
     let ticksPerFrame = +speedSlider.value;
+    let gateSize = +gateSizeSlider.value;
 
     const radius = 5;
     const dt = 0.1; // fixed timestep
@@ -83,13 +108,16 @@
       particles = [];
       for(let i = 0; i < 2 * nPerColor; i++) {
         const color = i < nPerColor ? 'red' : 'blue';
-        // Initial position - avoid creating particles too close to the barrier
-        const side = i < nPerColor ? 0 : 1; // Red on left side, blue on right side initially
-        const minX = side === 0 ? radius : centerX + radius;
-        const maxX = side === 0 ? centerX - radius : width - radius;
         
-        const x = Math.random() * (maxX - minX) + minX;
+        // Place particles randomly throughout the entire chamber
+        const x = Math.random() * (width - 2 * radius) + radius;
         const y = Math.random() * (height - 2 * radius) + radius;
+        
+        // Avoid creating particles too close to the barrier
+        if (Math.abs(x - centerX) < radius * 2) {
+          i--; // Try again
+          continue;
+        }
         
         // Initial velocity with better distribution
         const speed = 1 + Math.random() * 2;
@@ -112,6 +140,11 @@
     speedSlider.oninput = () => {
       ticksPerFrame = +speedSlider.value;
       speedValEl.textContent = ticksPerFrame;
+    };
+    
+    gateSizeSlider.oninput = () => {
+      gateSize = +gateSizeSlider.value;
+      gateSizeValEl.textContent = gateSize;
     };
     
     canvas.addEventListener('mousedown', () => mouseDown = true);
@@ -166,6 +199,10 @@
 
     // Improved barrier collision detection and handling
     function handleBarrierCollision(p) {
+      // Calculate current gate position
+      const gateY1 = height/2 - gateSize/2;
+      const gateY2 = height/2 + gateSize/2;
+      
       // Calculate distance to barrier
       const distToBarrier = Math.abs(p.x - centerX);
       
@@ -208,10 +245,14 @@
     }
 
     function simStep() {
+      // Calculate gate dimensions based on current gateSize
+      const gateY1 = height/2 - gateSize/2;
+      const gateY2 = height/2 + gateSize/2;
+    
       // gate decision
       if (autoMode) {
         // Maxwell's demon logic - predict which particles will reach the gate
-        const R = gateH/2, cx = centerX, cy = height/2;
+        const cx = centerX, cy = height/2;
         let soonest = null, tMin = Infinity;
         
         for (const p of particles) {
@@ -268,6 +309,10 @@
             const fraction = Math.abs((centerX - prevX) / (p.x - prevX));
             const crossingY = prevY + fraction * (p.y - prevY);
             
+            // Calculate current gate position
+            const gateY1 = height/2 - gateSize/2;
+            const gateY2 = height/2 + gateSize/2;
+            
             // Check if crossing through gate area while gate is open
             const passingThroughGate = crossingY >= gateY1 && crossingY <= gateY2 && gateOpen;
             
@@ -311,6 +356,10 @@
     }
 
     function draw() {
+      // Calculate current gate position
+      const gateY1 = height/2 - gateSize/2;
+      const gateY2 = height/2 + gateSize/2;
+    
       // Clear the entire canvas before drawing the new frame
       ctx.clearRect(0, 0, width, height);
       
@@ -361,11 +410,11 @@
         }
       });
       
-      // Display particle distribution stats
-      ctx.fillStyle = 'rgba(255,255,255,0.7)';
-      ctx.font = '12px sans-serif';
-      ctx.fillText(`Left: ${leftRed}R, ${leftBlue}B`, 10, height - 10);
-      ctx.fillText(`Right: ${rightRed}R, ${rightBlue}B`, width - 110, height - 10);
+      // Update particle count in the DOM
+      leftRedEl.textContent = leftRed;
+      leftBlueEl.textContent = leftBlue;
+      rightRedEl.textContent = rightRed;
+      rightBlueEl.textContent = rightBlue;
     }
 
     // Animation function with consistent physics and rendering
