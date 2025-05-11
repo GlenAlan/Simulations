@@ -20,7 +20,7 @@
     <label>Speed (ticks/frame): <span id="speedVal">10</span>
       <input type="range" id="speedSlider" min="1" max="250" step="1" value="10">
     </label>
-    <label><input type="checkbox" id="autoMode", checked="True"> Auto Mode (Maxwell’s Demon)</label>
+    <label><input type="checkbox" id="autoMode" checked="true"> Auto Mode (Maxwell's Demon)</label>
     <div style="font-size:0.9em; color:#aaa; margin-top:5px;">(Manual: hold mouse to open gate)</div>
   </div>
 
@@ -51,94 +51,343 @@
     const dt = 0.1; // fixed timestep
 
     class Particle {
-      constructor(x,y,vx,vy,color){ this.x=x; this.y=y; this.vx=vx; this.vy=vy; this.color=color; }
-    }
-
-    function initParticles(){
-      particles = [];
-      for(let i=0; i<2*nPerColor; i++){
-        const color = i<nPerColor? 'red':'blue';
-        const x = Math.random()*(width-2*radius)+radius;
-        const y = Math.random()*(height-2*radius)+radius;
-        const ang = Math.random()*Math.PI*2, sp=1+Math.random()*2;
-        particles.push(new Particle(x,y,Math.cos(ang)*sp,Math.sin(ang)*sp,color));
+      constructor(x, y, vx, vy, color) { 
+        this.x = x; 
+        this.y = y; 
+        this.vx = vx; 
+        this.vy = vy; 
+        this.color = color; 
+        this.lastUpdateTime = 0;
+      }
+      
+      // Calculate kinetic energy (proportional to speed squared)
+      get energy() {
+        return 0.5 * (this.vx * this.vx + this.vy * this.vy);
+      }
+      
+      // Get current speed
+      get speed() {
+        return Math.hypot(this.vx, this.vy);  
+      }
+      
+      // Set speed while preserving direction
+      setSpeed(newSpeed) {
+        if (this.speed === 0) return; // Avoid division by zero
+        const factor = newSpeed / this.speed;
+        this.vx *= factor;
+        this.vy *= factor;
       }
     }
 
-    slider.oninput = ()=>{
-      nPerColor = +slider.value; countVal.textContent = nPerColor; initParticles();
+    function initParticles() {
+      particles = [];
+      for(let i = 0; i < 2 * nPerColor; i++) {
+        const color = i < nPerColor ? 'red' : 'blue';
+        // Initial position - avoid creating particles too close to the barrier
+        const side = i < nPerColor ? 0 : 1; // Red on left side, blue on right side initially
+        const minX = side === 0 ? radius : centerX + radius;
+        const maxX = side === 0 ? centerX - radius : width - radius;
+        
+        const x = Math.random() * (maxX - minX) + minX;
+        const y = Math.random() * (height - 2 * radius) + radius;
+        
+        // Initial velocity with better distribution
+        const speed = 1 + Math.random() * 2;
+        const angle = Math.random() * Math.PI * 2;
+        const vx = Math.cos(angle) * speed;
+        const vy = Math.sin(angle) * speed;
+        
+        particles.push(new Particle(x, y, vx, vy, color));
+      }
+    }
+
+    slider.oninput = () => {
+      nPerColor = +slider.value; 
+      countVal.textContent = nPerColor; 
+      initParticles();
     };
-    autoCB.onchange = ()=> autoMode = autoCB.checked;
-    speedSlider.oninput = ()=>{
+    
+    autoCB.onchange = () => autoMode = autoCB.checked;
+    
+    speedSlider.oninput = () => {
       ticksPerFrame = +speedSlider.value;
       speedValEl.textContent = ticksPerFrame;
     };
-    canvas.addEventListener('mousedown', ()=>mouseDown=true);
-    window.addEventListener('mouseup', ()=>mouseDown=false);
+    
+    canvas.addEventListener('mousedown', () => mouseDown = true);
+    window.addEventListener('mouseup', () => mouseDown = false);
 
-    function simStep(){
+    // Utility function for elastic collision with walls
+    function handleWallCollision(p) {
+      let bounced = false;
+      const minSpeed = 0.5;
+      const maxSpeed = 3.0;
+      
+      // Handle horizontal walls (top and bottom)
+      if (p.y < radius) {
+        p.y = radius;
+        p.vy = -p.vy;
+        bounced = true;
+      } else if (p.y > height - radius) {
+        p.y = height - radius;
+        p.vy = -p.vy;
+        bounced = true;
+      }
+      
+      // Handle vertical walls (left and right edges)
+      if (p.x < radius) {
+        p.x = radius;
+        p.vx = -p.vx;
+        bounced = true;
+      } else if (p.x > width - radius) {
+        p.x = width - radius;
+        p.vx = -p.vx;
+        bounced = true;
+      }
+      
+      // Add slight randomization after bounce to prevent periodic orbits
+      if (bounced) {
+        // Small random perturbation to angle while preserving speed
+        const currentSpeed = p.speed;
+        const currentAngle = Math.atan2(p.vy, p.vx);
+        const perturbation = (Math.random() - 0.5) * 0.2; // Small angle change
+        const newAngle = currentAngle + perturbation;
+        
+        p.vx = Math.cos(newAngle) * currentSpeed;
+        p.vy = Math.sin(newAngle) * currentSpeed;
+        
+        // Ensure speed stays within bounds
+        const newSpeed = Math.max(minSpeed, Math.min(p.speed, maxSpeed));
+        p.setSpeed(newSpeed);
+      }
+      
+      return bounced;
+    }
+
+    // Improved barrier collision detection and handling
+    function handleBarrierCollision(p) {
+      // Calculate distance to barrier
+      const distToBarrier = Math.abs(p.x - centerX);
+      
+      // Only process collisions if we're close enough to the barrier
+      if (distToBarrier > radius) return false;
+      
+      // Check if particle is within gate area
+      const inGateArea = p.y >= gateY1 && p.y <= gateY2;
+      
+      // If gate is open and particle is in gate area, allow passage
+      if (gateOpen && inGateArea) return false;
+      
+      // Otherwise, handle collision with barrier
+      
+      // First, determine which side of barrier the particle is on
+      const isLeftSide = p.x < centerX;
+      
+      // Place particle at proper distance from barrier (accounting for radius)
+      p.x = isLeftSide ? centerX - radius : centerX + radius;
+      
+      // Reflect velocity vector off the barrier (with damping factor to avoid energy build-up)
+      p.vx = -p.vx * 0.98;
+      
+      // Small randomization to prevent particles from getting trapped in vertical motion
+      const currentSpeed = p.speed;
+      const randomFactor = 1 + (Math.random() - 0.5) * 0.2;
+      
+      // Ensure horizontal component doesn't get too small
+      if (Math.abs(p.vx) < 0.4 * currentSpeed) {
+        p.vx = (isLeftSide ? -1 : 1) * 0.4 * currentSpeed;
+        
+        // Adjust y velocity to maintain approximate speed
+        const speedAfterXAdjustment = Math.hypot(p.vx, p.vy);
+        const speedRatio = currentSpeed / speedAfterXAdjustment;
+        p.vx *= speedRatio;
+        p.vy *= speedRatio;
+      }
+      
+      return true;
+    }
+
+    function simStep() {
       // gate decision
-      if(autoMode){
-        const R = gateH/2, cx=centerX, cy=height/2;
-        let soonest=null, tMin=Infinity;
-        for(const p of particles){
-          const dx0=p.x-cx, dy0=p.y-cy;
-          if(dx0*dx0+dy0*dy0 <= R*R && p.vx!==0){
-            const t=(cx-p.x)/(p.vx*dt);
-            if(t>=0 && t<tMin){
-              const yI=p.y + p.vy*dt*t;
-              if(yI>=gateY1 && yI<=gateY2){ soonest=p; tMin=t; }
+      if (autoMode) {
+        // Maxwell's demon logic - predict which particles will reach the gate
+        const R = gateH/2, cx = centerX, cy = height/2;
+        let soonest = null, tMin = Infinity;
+        
+        for (const p of particles) {
+          // Skip particles with zero x velocity
+          if (Math.abs(p.vx) < 0.001) continue;
+          
+          // Only consider particles moving toward the gate
+          const movingTowardsGate = (p.x < centerX && p.vx > 0) || (p.x > centerX && p.vx < 0);
+          if (!movingTowardsGate) continue;
+
+          // Calculate time to reach the gate
+          const t = Math.abs((cx - p.x) / p.vx);
+          if (t >= 0 && t < tMin) {
+            // Predict future y position at gate
+            const yI = p.y + p.vy * t;
+            // Check if it will pass through gate opening
+            if (yI >= gateY1 && yI <= gateY2) { 
+              soonest = p; 
+              tMin = t; 
             }
           }
         }
-        gateOpen = soonest?
-          (soonest.color==='red' && soonest.vx>0) || (soonest.color==='blue' && soonest.vx<0)
+        
+        // Open gate if particle meets criteria (red going right, blue going left)
+        gateOpen = soonest ? 
+          (soonest.color === 'red' && soonest.vx > 0) || (soonest.color === 'blue' && soonest.vx < 0)
           : false;
-      } else gateOpen = mouseDown;
+      } else {
+        gateOpen = mouseDown;
+      }
 
-      // move & bounce walls
-      particles.forEach(p=>{
-        p.x += p.vx*dt;
-        p.y += p.vy*dt;
-        if(p.x<radius){ p.x=radius; p.vx=-p.vx+(Math.random()-0.5)*0.2; p.vy+=(Math.random()-0.5)*0.2; }
-        if(p.x>width-radius){ p.x=width-radius; p.vx=-p.vx+(Math.random()-0.5)*0.2; p.vy+=(Math.random()-0.5)*0.2; }
-        if(p.y<radius){ p.y=radius; p.vy=-p.vy+(Math.random()-0.5)*0.2; p.vx+=(Math.random()-0.5)*0.2; }
-        if(p.y>height-radius){ p.y=height-radius; p.vy=-p.vy+(Math.random()-0.5)*0.2; p.vx+=(Math.random()-0.5)*0.2; }
-        if(p.vx*p.vx+p.vy*p.vy>4){ // speed limit
-          const sp = Math.hypot(p.vx, p.vy);
-          p.vx *= 2/sp; p.vy *= 2/sp;
+      // Process each particle
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        
+        // Store previous position for collision detection
+        const prevX = p.x;
+        const prevY = p.y;
+        
+        // Update position
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        
+        // Handle wall collisions first
+        const wallCollision = handleWallCollision(p);
+        
+        // If no wall collision, check for barrier collision
+        if (!wallCollision) {
+          // Check if particle crosses the barrier in this step
+          const crossingBarrier = (prevX < centerX && p.x >= centerX) || (prevX > centerX && p.x <= centerX);
+          
+          if (crossingBarrier) {
+            // Calculate exact y position at crossing point
+            const fraction = Math.abs((centerX - prevX) / (p.x - prevX));
+            const crossingY = prevY + fraction * (p.y - prevY);
+            
+            // Check if crossing through gate area while gate is open
+            const passingThroughGate = crossingY >= gateY1 && crossingY <= gateY2 && gateOpen;
+            
+            if (!passingThroughGate) {
+              // Handle collision with barrier
+              const barrierSide = prevX < centerX ? -1 : 1; // -1 for left side, 1 for right side
+              p.x = centerX + barrierSide * (radius + 0.1); // Position just off the barrier
+              p.vx = -p.vx * 0.98; // Reflect with slight energy loss
+              
+              // Add small random perturbation to avoid particles getting stuck
+              const currentSpeed = p.speed;
+              const angle = Math.atan2(p.vy, p.vx);
+              const perturbation = (Math.random() - 0.5) * 0.3;
+              p.vx = Math.cos(angle + perturbation) * currentSpeed;
+              p.vy = Math.sin(angle + perturbation) * currentSpeed;
+              
+              // Ensure horizontal component is significant to avoid vertical trapping
+              if (Math.abs(p.vx) < 0.4 * currentSpeed) {
+                p.vx = barrierSide * 0.4 * currentSpeed;
+                // Adjust speed to maintain energy
+                p.setSpeed(currentSpeed);
+              }
+            }
+          } else {
+            // Check if particle is very close to barrier
+            handleBarrierCollision(p);
+          }
         }
-        if(p.vx*p.vx+p.vy*p.vy<1){ // too slow
-          p.vx *= 1.1; p.vy *= 1.1;
+        
+        // Maintain reasonable energy levels
+        const currentSpeed = p.speed;
+        const minSpeed = 0.5;
+        const maxSpeed = 3.0;
+        
+        if (currentSpeed < minSpeed) {
+          p.setSpeed(minSpeed);
+        } else if (currentSpeed > maxSpeed) {
+          p.setSpeed(maxSpeed);
         }
-      });
-      // barrier
-      particles.forEach(p=>{
-        const prevX = p.x - p.vx*dt;
-        if((prevX<centerX && p.x>=centerX)||(prevX>centerX && p.x<=centerX)){
-          const above = p.y<gateY1 || p.y>gateY2;
-          if(above||!gateOpen){ p.x=centerX; p.vx=-p.vx+(Math.random()-0.5)*0.2; p.vy+=(Math.random()-0.5)*0.2; }
-        }
-      });
+      }
     }
 
-    function draw(){
-      ctx.clearRect(0,0,width,height);
-      ctx.strokeStyle='#444'; ctx.lineWidth=2;
-      ctx.beginPath(); ctx.moveTo(centerX,0); ctx.lineTo(centerX,gateY1);
-      ctx.moveTo(centerX,gateY2); ctx.lineTo(centerX,height);
+    function draw() {
+      // Clear the entire canvas before drawing the new frame
+      ctx.clearRect(0, 0, width, height);
+      
+      // Draw the center barrier
+      ctx.strokeStyle = '#444';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(centerX, 0);
+      ctx.lineTo(centerX, gateY1);
+      ctx.moveTo(centerX, gateY2);
+      ctx.lineTo(centerX, height);
       ctx.stroke();
-      if(!gateOpen){ ctx.beginPath(); ctx.moveTo(centerX,gateY1); ctx.lineTo(centerX,gateY2); ctx.stroke(); }
-      particles.forEach(p=>{ ctx.beginPath(); ctx.arc(p.x,p.y,radius,0,Math.PI*2); ctx.fillStyle=p.color; ctx.fill(); });
+      
+      // Draw the gate if closed
+      if (!gateOpen) { 
+        ctx.beginPath(); 
+        ctx.moveTo(centerX, gateY1); 
+        ctx.lineTo(centerX, gateY2); 
+        ctx.stroke(); 
+      } else {
+        // Visualize open gate with different color
+        ctx.strokeStyle = '#333';
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.moveTo(centerX, gateY1);
+        ctx.lineTo(centerX, gateY2);
+        ctx.stroke();
+        ctx.setLineDash([]); // Reset line dash
+      }
+      
+      // Count particles on each side
+      let leftRed = 0, leftBlue = 0, rightRed = 0, rightBlue = 0;
+      
+      // Draw all particles
+      particles.forEach(p => { 
+        ctx.beginPath(); 
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2); 
+        ctx.fillStyle = p.color; 
+        ctx.fill();
+        
+        // Count particles by side and color
+        if (p.x < centerX) {
+          if (p.color === 'red') leftRed++;
+          else leftBlue++;
+        } else {
+          if (p.color === 'red') rightRed++;
+          else rightBlue++;
+        }
+      });
+      
+      // Display particle distribution stats
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.font = '12px sans-serif';
+      ctx.fillText(`Left: ${leftRed}R, ${leftBlue}B`, 10, height - 10);
+      ctx.fillText(`Right: ${rightRed}R, ${rightBlue}B`, width - 110, height - 10);
     }
 
-    function animate(){
-      for(let i=0;i<ticksPerFrame;i++) simStep();
+    // Animation function with consistent physics and rendering
+    function animate() {
+      // Run physics simulation steps multiple times per frame
+      const steps = Math.min(ticksPerFrame, 100); // Cap steps to prevent browser hanging
+      const scaledDt = dt * (steps > 30 ? 0.5 : 1.0);
+      
+      for (let i = 0; i < steps; i++) {
+        simStep();
+      }
+      
+      // Draw the scene
       draw();
+      
+      // Continue animation loop
       requestAnimationFrame(animate);
     }
 
-    initParticles(); animate();
+    // Initialize and start animation
+    initParticles(); 
+    animate();
   </script>
 </body>
 </html>
